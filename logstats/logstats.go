@@ -245,7 +245,7 @@ func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interfa
 			newMap[k] = v
 		}
 
-		if equalIntegers(v, prev) {
+		if equalInt64(v, prev) {
 			continue
 		}
 
@@ -264,16 +264,16 @@ func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interfa
 // Utility funtions needed for filtering
 //
 
-func equalIntegers(v, prev interface{}) bool {
+func equalInt64(v, prev interface{}) bool {
 	var vint, prevint int
 	var ok bool
 
-	vint, ok = v.(int)
+	vint, ok = v.(int64)
 	if !ok {
 		return false
 	}
 
-	prevint, ok = prev.(int)
+	prevint, ok = prev.(int64)
 	if !ok {
 		return false
 	}
