@@ -237,10 +237,25 @@ func (dlst *dedupeLogStats) getBytesToWrite(statType string, statMap map[string]
 	return bytes, err
 }
 
-func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interface{}) map[string]interface{} {
+func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interface{}) ([]byte, error) {
 	newMap := make(map[string]interface{})
+
+	getFilteredMap(prevMap, currMap, newMap)
+
+	bytes, err := json.Marshal(newMap)
+	if err != nil {
+		return nil, err
+	}
+
+	return lst.formatBytes(bytes), nil
+}
+
+//
+// Utility funtions needed for filtering
+//
+func getFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 	for k, v := range currMap {
-		prev, ok := prevMap[k]
+		prev, ok := prev[k]
 		if !ok {
 			newMap[k] = v
 		}
@@ -253,16 +268,27 @@ func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interfa
 			continue
 		}
 
-		// Data type of the value is unsupported for filtering.
-		newMap[k] = v
+		var currM, prevM map[string]interface{}
+		currM, ok = v.(map[string]interface{})
+		if !ok {
+			newMap[k] = v
+			continue
+		}
+
+		prevM, ok = prev.(map[string]interface{})
+		if !ok {
+			newMap[k] = v
+			continue
+		}
+
+		newM := make(map[string]interface{})
+		newMap[k] = newM
+		getFilteredMap(prevM, currM, newM)
+		if len(newM) == 0 {
+			delete(newMap, k)
+		}
 	}
-
-	return newMap
 }
-
-//
-// Utility funtions needed for filtering
-//
 
 func equalInt64(v, prev interface{}) bool {
 	var vint, prevint int
