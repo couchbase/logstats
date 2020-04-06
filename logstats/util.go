@@ -31,7 +31,7 @@ func getLogFileNumber(fileName string) (int, error) {
 func openLogFile(fileName string) (*os.File, int, error) {
 	// Assumption: fileName always has ".log" extention.
 
-	dir := filepath.Dir()
+	dir := filepath.Dir(fileName)
 	err := os.MkdirAll(dir, 0755)
 	if err != nil {
 		return nil, 0, err
@@ -51,11 +51,19 @@ func openLogFile(fileName string) (*os.File, int, error) {
 		return nil, 0, err
 	}
 
+	if DEBUG != 0 {
+		fmt.Println("Opened log file", fname)
+	}
+
 	return f, int(finfo.Size()), nil
 }
 
 func writeToFile(f *os.File, bytes []byte) error {
-	_, err := f.Write(bytes)
+	n, err := f.Write(bytes)
+	if DEBUG != 0 {
+		fmt.Println(n, "bytes written to the file")
+	}
+
 	return err
 }
 
@@ -63,7 +71,7 @@ func rotate(fileName string, numFiles int) (*os.File, int, error) {
 	// Assumption: fileName always has ".log" extention.
 
 	name := fileName[:len(fileName)-4]
-	pattern := fmt.Sprintf("%s.*.log", fileName)
+	pattern := fmt.Sprintf("%s.*.log", name)
 	all, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, 0, err

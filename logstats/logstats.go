@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,8 @@ import (
 const (
 	MAX_NUM_FILES = 99
 )
+
+var DEBUG int = 0
 
 //
 // LogStats interface
@@ -57,18 +58,14 @@ type logStats struct {
 //            incoming log message will be written to the current file.
 //            This can lead to log files larger than sizeLimit.
 // numFiles:  Number of log files to be maintained.
-// tsFormat
+// tsFormat:  Format in which the timestamps in the log messages are
+//            to be logged.
+//
 func NewLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) (*logStats, error) {
-	if numFiles > MAX_NUM_FILES {
-		return nil, fmt.Errorf("NewLogStats: More than %v files not supported.", MAX_NUM_FILES)
-	}
-
-	if numFiles < 1 {
-		return nil, fmt.Errorf("NewLogStats: Unsupported file count", numFiles)
-	}
-
-	if !strings.HasSuffix(fileName, ".log") {
-		fileName = filepath.Join(fileName, ".log")
+	var err error
+	fileName, err = validateInput(fileName, numFiles)
+	if err != nil {
+		return nil, err
 	}
 
 	f, sz, err := openLogFile(fileName)
@@ -106,7 +103,11 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 	// specified sizeLimit. This can lead to files larger than
 	// sizeLimit.
 	if lst.needsRotation() {
-		f, sz, err := rotate(lst.fileName)
+		if DEBUG != 0 {
+			fmt.Println("Log file", lst.fileName, "needs rotation")
+		}
+
+		f, sz, err := rotate(lst.fileName, lst.numFiles)
 		if err != nil {
 			return err
 		}
@@ -137,18 +138,15 @@ func (lst *logStats) getBytesToWrite(statType string, statMap map[string]interfa
 		return nil, err
 	}
 
-	return lst.formatBytes(bytes), nil
+	return lst.formatBytes(statType, bytes), nil
 }
 
-func (lst *logStats) formatBytes(bytes []byte) []byte {
-	// TODO: This function generates a lot of garbage. Can we use sync.Pool?
-	// Do we need sync.Pool?
-
+func (lst *logStats) formatBytes(statType string, bytes []byte) []byte {
 	bytes = append(bytes, []byte("\n")...)
 
 	prefix := []byte(strings.Join([]string{time.Now().Format(lst.tsFormat), statType, ""}, " "))
 	bytes = append(prefix, bytes...)
-	return bytes, nil
+	return bytes
 }
 
 func (lst *logStats) needsRotation() bool {
@@ -163,6 +161,16 @@ func (lst *logStats) needsRotation() bool {
 //
 type dedupeLogStats struct {
 	*logStats
+
+	fileName  string
+	sizeLimit int
+	numFiles  int
+	tsFormat  string
+
+	lock    sync.Mutex
+	sz      int
+	f       *os.File
+	durable bool
 
 	prevStatsMap map[string]map[string]interface{}
 }
@@ -179,18 +187,15 @@ type dedupeLogStats struct {
 //            incoming log message will be written to the current file.
 //            This can lead to log files larger than sizeLimit.
 // numFiles:  Number of log files to be maintained.
+// tsFormat:  Format in which the timestamps in the log messages are
+//            to be logged.
 //
 func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) (*dedupeLogStats, error) {
-	if numFiles > MAX_NUM_FILES {
-		return nil, fmt.Errorf("NewLogStats: More than %v files not supported.", MAX_NUM_FILES)
-	}
 
-	if numFiles < 1 {
-		return nil, fmt.Errorf("NewLogStats: Unsupported file count", numFiles)
-	}
-
-	if !strings.HasSuffix(fileName, ".log") {
-		fileName = filepath.Join(fileName, ".log")
+	var err error
+	fileName, err = validateInput(fileName, numFiles)
+	if err != nil {
+		return nil, err
 	}
 
 	f, sz, err := openLogFile(fileName)
@@ -231,13 +236,13 @@ func (dlst *dedupeLogStats) getBytesToWrite(statType string, statMap map[string]
 		bytes, err = dlst.logStats.getBytesToWrite(statType, statMap)
 		dlst.prevStatsMap[statType] = statMap
 	} else {
-		bytes, err = dlst.getFilteredBytes(prevStat, statMap)
+		bytes, err = dlst.getFilteredBytes(statType, prevMap, statMap)
 	}
 
 	return bytes, err
 }
 
-func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interface{}) ([]byte, error) {
+func (dlst *dedupeLogStats) getFilteredBytes(statType string, prevMap, currMap map[string]interface{}) ([]byte, error) {
 	newMap := make(map[string]interface{})
 
 	getFilteredMap(prevMap, currMap, newMap)
@@ -247,7 +252,26 @@ func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interfa
 		return nil, err
 	}
 
-	return lst.formatBytes(bytes), nil
+	return dlst.formatBytes(statType, bytes), nil
+}
+
+//
+// Input validation functions
+//
+func validateInput(fileName string, numFiles int) (string, error) {
+	if numFiles > MAX_NUM_FILES {
+		return fileName, fmt.Errorf("NewLogStats: More than %v files not supported.", MAX_NUM_FILES)
+	}
+
+	if numFiles < 1 {
+		return fileName, fmt.Errorf("NewLogStats: Unsupported file count %v", numFiles)
+	}
+
+	if !strings.HasSuffix(fileName, ".log") {
+		fileName = fileName + ".log"
+	}
+
+	return fileName, nil
 }
 
 //
@@ -255,7 +279,7 @@ func (dlst *dedupeLogStats) getFilteredBytes(prevMap, currMap map[string]interfa
 //
 func getFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 	for k, v := range currMap {
-		prev, ok := prev[k]
+		prev, ok := prevMap[k]
 		if !ok {
 			newMap[k] = v
 		}
@@ -291,7 +315,7 @@ func getFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 }
 
 func equalInt64(v, prev interface{}) bool {
-	var vint, prevint int
+	var vint, prevint int64
 	var ok bool
 
 	vint, ok = v.(int64)
