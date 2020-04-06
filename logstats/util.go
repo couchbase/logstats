@@ -38,7 +38,7 @@ func openLogFile(fileName string) (*os.File, int, error) {
 	}
 
 	fname := getLogFileName(fileName, 0)
-	flag := os.O_CREATE | os.O_APPEND
+	flag := os.O_CREATE | os.O_APPEND | os.O_WRONLY
 	var f *os.File
 	f, err = os.OpenFile(fname, flag, 0755)
 	if err != nil {
