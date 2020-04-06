@@ -107,7 +107,8 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 			fmt.Println("Log file", lst.fileName, "needs rotation")
 		}
 
-		f, sz, err := rotate(lst.fileName, lst.numFiles)
+		var sz int
+		f, sz, err = rotate(lst.fileName, lst.numFiles)
 		if err != nil {
 			return err
 		}

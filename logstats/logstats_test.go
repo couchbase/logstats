@@ -6,18 +6,20 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 )
 
 func TestLogStatsBasics(t *testing.T) {
-	DEBUG = 1
-
 	// Create a stats logger
 	tmpDir := os.TempDir()
 	fileName := filepath.Join(tmpDir, "basics.log")
 
 	err := cleanup([]string{fileName})
+	if err != nil {
+		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+	}
 
 	var statLogger LogStats
 	statLogger, err = NewLogStats(fileName, 32*1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
@@ -26,14 +28,7 @@ func TestLogStatsBasics(t *testing.T) {
 	}
 
 	// Write a stat
-	stat := make(map[string]interface{})
-	stat["k1"] = 10
-	stat["k2"] = "Value2"
-
-	k3stat := make(map[string]interface{})
-	k3stat["k31"] = 310
-	k3stat["k32"] = "Value32"
-	stat["k3"] = k3stat
+	stat := getSimpleStat(0)
 	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestLogStatsBasics failed with error %v", err)
@@ -51,6 +46,56 @@ func TestLogStatsBasics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TestLogStatsBasics failed with error %v", err)
 	}
+}
+
+func TestLogStatsRotation(t *testing.T) {
+	// Create a stats logger
+	tmpDir := os.TempDir()
+	fileName := filepath.Join(tmpDir, "rotation.log")
+
+	err := cleanup([]string{fileName})
+	if err != nil {
+		t.Fatalf("TestLogStatsRotation failed with error %v", err)
+	}
+
+	var statLogger LogStats
+	statLogger, err = NewLogStats(fileName, 128, 4, "2006-01-02T15:04:05.000-07:00")
+	if err != nil {
+		t.Fatalf("TestLogStatsRotation failed with error %v", err)
+	}
+
+	// Write a stat
+	exp := make([]map[string]interface{}, 0)
+	for i := 0; i < 5; i++ {
+		stat := getSimpleStat(i)
+		err = statLogger.Write("kStats", stat)
+		if err != nil {
+			t.Fatalf("TestLogStatsRotation failed with error %v", err)
+		}
+
+		vstat := make(map[string]interface{})
+		vstat["type"] = "kStats"
+		vstat["stat"] = stat
+		exp = append(exp, vstat)
+	}
+
+	// Verify stats
+	err = verifyStats(exp, fileName)
+	if err != nil {
+		t.Fatalf("TestLogStatsRotation failed with error %v", err)
+	}
+}
+
+func getSimpleStat(seed int) map[string]interface{} {
+	stat := make(map[string]interface{})
+	stat["k1"] = seed + 10
+	stat["k2"] = fmt.Sprintf("Value%v", seed+2)
+
+	k3stat := make(map[string]interface{})
+	k3stat["k31"] = 300*seed + 10
+	k3stat["k32"] = fmt.Sprintf("Value%v", 30*seed+2)
+	stat["k3"] = k3stat
+	return stat
 }
 
 func cleanup(paths []string) error {
@@ -73,30 +118,57 @@ func cleanup(paths []string) error {
 	return nil
 }
 
+func getAllLogsFromFiles(fileName string) ([]string, error) {
+
+	name := fileName[:len(fileName)-4]
+	pattern := fmt.Sprintf("%s.*.log", name)
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Strings(files)
+	all := make([]string, 0)
+	for i := len(files) - 1; i >= 0; i-- {
+		all = append(all, files[i])
+	}
+
+	lines := make([]string, 0)
+	for _, fname := range all {
+		f, err := os.Open(fname)
+		if err != nil {
+			return nil, err
+		}
+
+		var finfo os.FileInfo
+		finfo, err = f.Stat()
+		if err != nil {
+			return nil, err
+		}
+
+		buf := make([]byte, finfo.Size())
+		_, err = f.Read(buf)
+		if err != nil {
+			return nil, err
+		}
+
+		s := string(buf)
+		flines := strings.Split(s, "\n")
+
+		if len(flines[len(flines)-1]) == 0 {
+			flines = flines[:len(flines)-1]
+		}
+		lines = append(lines, flines...)
+	}
+
+	return lines, nil
+}
+
 func verifyStats(exp []map[string]interface{}, fileName string) error {
-	fileName = getLogFileName(fileName, 0)
-	f, err := os.Open(fileName)
+
+	lines, err := getAllLogsFromFiles(fileName)
 	if err != nil {
 		return err
-	}
-
-	var finfo os.FileInfo
-	finfo, err = f.Stat()
-	if err != nil {
-		return err
-	}
-
-	buf := make([]byte, finfo.Size())
-	_, err = f.Read(buf)
-	if err != nil {
-		return err
-	}
-
-	s := string(buf)
-	lines := strings.Split(s, "\n")
-
-	if len(lines[len(lines)-1]) == 0 {
-		lines = lines[:len(lines)-1]
 	}
 
 	if len(lines) != len(exp) {

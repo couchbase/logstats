@@ -99,6 +99,10 @@ func rotate(fileName string, numFiles int) (*os.File, int, error) {
 			newFname = all[i+1]
 		}
 
+		if DEBUG != 0 {
+			fmt.Println("Renamaing oldfile", oldFname, "newfile", newFname)
+		}
+
 		err := os.Rename(oldFname, newFname)
 		if err != nil {
 			return nil, 0, err
