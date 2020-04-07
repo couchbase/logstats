@@ -86,13 +86,66 @@ func TestLogStatsRotation(t *testing.T) {
 	}
 }
 
+func TestDedupeLogStatsBasics(t *testing.T) {
+	DEBUG = 1
+
+	// Create a stats logger
+	tmpDir := os.TempDir()
+	fileName := filepath.Join(tmpDir, "dedupe_basics.log")
+
+	err := cleanup([]string{fileName})
+	if err != nil {
+		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+	}
+
+	var statLogger LogStats
+	statLogger, err = NewDedupeLogStats(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
+	if err != nil {
+		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+	}
+
+	// Write dedupe stats
+	stat := getSimpleStat(0)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+	}
+
+	exp := make([]map[string]interface{}, 0)
+	vstat := make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = stat
+
+	exp = append(exp, vstat)
+
+	stat = getSimpleStat(0)
+	stat["k1"] = int64(9876)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+	}
+
+	estat := make(map[string]interface{})
+	estat["k1"] = int64(9876)
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = estat
+	exp = append(exp, vstat)
+
+	// Verify stats
+	err = verifyStats(exp, fileName)
+	if err != nil {
+		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+	}
+}
+
 func getSimpleStat(seed int) map[string]interface{} {
 	stat := make(map[string]interface{})
-	stat["k1"] = seed + 10
+	stat["k1"] = int64(seed + 10)
 	stat["k2"] = fmt.Sprintf("Value%v", seed+2)
 
 	k3stat := make(map[string]interface{})
-	k3stat["k31"] = 300*seed + 10
+	k3stat["k31"] = int64(300*seed + 10)
 	k3stat["k32"] = fmt.Sprintf("Value%v", 30*seed+2)
 	stat["k3"] = k3stat
 	return stat
@@ -211,7 +264,7 @@ func convertFloatsToInts(m map[string]interface{}) {
 	for k, v := range m {
 		vf, ok := v.(float64)
 		if ok {
-			m[k] = int(vf)
+			m[k] = int64(vf)
 		}
 
 		var vm map[string]interface{}
