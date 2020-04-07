@@ -40,19 +40,23 @@ To enable/disable "flush to the disk" after every subsequent call to Write, use:
 
 # Caveats
 ## File Size Limit
-Unlike language-native logger framework implementations, in this framework sizeLimit is not a hard limit for the log file sizes. On contrary, it is just a soft limit. This becomes useful in (1) ensuring availability of the in case of deduplication of the stats as well as (2) handling use case of very small size limit versus very large log messages. For example, if the size limit is 100 and the first log message is 128 bytes, the entire log message will be written to the file - as this logging framework does not break up the log messages across multiple files. Recommendation is to use multiple small sized stat map (instead of using as single very large stats map), so that the excess bytes written to the file, beyond size limit will be limited. statType parameter - in Write interface- can be used to divide the stats among multiple sub-stats.
+Unlike language-native logger framework implementations, in this framework sizeLimit is not a hard limit for the log file sizes. On contrary, it is just a soft limit. This becomes useful in
+1. Ensuring availability of the in case of deduplication of the stats as well as
+2. Handling use case of very small size limit versus very large log messages.
+
+For example, if the size limit is 100 and the first log message is 128 bytes, the entire log message will be written to the file - as this logging framework does not break up the log messages across multiple files. Recommendation is to use multiple small sized stat map (instead of using as single very large stats map), so that the excess bytes written to the file, beyond size limit will be limited. statType parameter - in `Write` interface- can be used to divide the stats among multiple sub-stats.
 
 ## Supported data types for deduplication.
-Currently, deduplication is supported only for the values of type "int64", "string" and "nested map". In case of the nested maps, deduplucation for values within nested maps is supported.
+Currently, deduplication is supported only for the values of type `int64`, `string` and `nested map`. In case of the nested maps, deduplucation for values within nested maps is supported.
 
 # How deduplication works?
 The stats deduplication will happen only within a single file. Once the file gets rotated, the log messages will not get deduplicating across multiple files.
 
-For example, for the initial stat values {"k1": 10, "k2": 20, "k3": 30}, if only the value of "k1" changes to 100, then the next log message in the same log file will be {"k1": 100}. Note that "k2": 20, and "k3": 30 is not written to the file due to deduplication. But if the next log message were to be written to the different log file (due to log rotation), entire set of stats - {"k1": 100, "k2": 20, "k3": 30} - will be written to the new (rotated) log file.
+For example, for the initial stat values `{"k1": 10, "k2": 20, "k3": 30}`, if only the value of `"k1"` changes to `100`, then the next log message in the same log file will be `{"k1": 100}`. Note that `"k2": 20, "k3": 30` is not written to the file due to deduplication. But if the next log message were to be written to the different log file (due to log rotation), entire set of stats - `{"k1": 100, "k2": 20, "k3": 30}` - will be written to the new (rotated) log file.
 
 # Performance Guidelines
 ## Avoid very large stats maps
-If the stats maps to be logged are very large, it may take equivalent amount of time to deduplicate it against the previous stats map. So, recommendation is to log smaller chunks of stats within a single call to Write interface. If needed, stats can be sub-divided in multiple types of stats by providing different statType. For example, memory stats and CPU stats of a process can be written separately in two different calls to Write interface.
+If the stats maps to be logged are very large, it may take equivalent amount of time to deduplicate it against the previous stats map. So, recommendation is to log smaller chunks of stats within a single call to `Write` interface. If needed, stats can be sub-divided in multiple types of stats by providing different statType. For example, memory stats and CPU stats of a process can be written separately in two different calls to `Write` interface.
 
 ## Avoid very high log frequency
 This library is not optimized for very high frequency stat logging. So, recommendation is to log stats every 15 seconds or even less frequently than that.
