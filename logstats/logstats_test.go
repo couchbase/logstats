@@ -104,7 +104,7 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
@@ -119,7 +119,7 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 	// Dedupe stat 1
 	stat = getSimpleStat(0)
 	stat["k1"] = int64(9876)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
@@ -135,7 +135,7 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 	stat = getSimpleStat(0)
 	stat["k2"] = "ChangedValue"
 	stat["k1"] = int64(9876)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
@@ -172,7 +172,7 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
@@ -187,7 +187,7 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	// Dedupe stat 1
 	stat = getSimpleStat(0)
 	stat["k1"] = int64(9876)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
@@ -203,7 +203,7 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	stat = getSimpleStat(0)
 	stat["k2"] = "ChangedValue"
 	stat["k1"] = int64(9876)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
@@ -217,7 +217,7 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	stat = getSimpleStat(0)
 	stat["k2"] = "ChangedValue"
 	stat["k1"] = int64(98)
-	err = statLogger.WriteDedupe("kStats", stat)
+	err = statLogger.Write("kStats", stat)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}

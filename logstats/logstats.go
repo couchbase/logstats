@@ -20,15 +20,12 @@ var DEBUG int = 0
 //
 type LogStats interface {
 
-	// Write stats to the file, without deduplication.
+	// Write stats to the file.
 	Write(statType string, statMap map[string]interface{}) error
 
 	// Set flag for durability - when set to true, each call to Write will
 	// also call os.File.Sync()
 	SetDurable(durable bool)
-
-	// Write Deduplicated stats to the file
-	WriteDedupe(statType string, statMap map[string]interface{}) error
 }
 
 //
@@ -144,10 +141,6 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 	return lst.writeAndCommit(bytes)
 }
 
-func (lst *logStats) WriteDedupe(statType string, statMap map[string]interface{}) error {
-	return fmt.Errorf("WriteDedupe is not supported with object type %T", lst)
-}
-
 func (lst *logStats) getBytesToWrite(statType string, statMap map[string]interface{}) ([]byte, error) {
 	bytes, err := json.Marshal(statMap)
 	if err != nil {
@@ -239,9 +232,7 @@ func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat st
 	return lst, nil
 }
 
-func (dlst *dedupeLogStats) WriteDedupe(statType string, statMap map[string]interface{}) error {
-	// return dlst.Write(statType, statMap)
-
+func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{}) error {
 	dlst.lock.Lock()
 	defer dlst.lock.Unlock()
 
