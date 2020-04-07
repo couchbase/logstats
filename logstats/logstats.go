@@ -20,7 +20,7 @@ var DEBUG int = 0
 //
 type LogStats interface {
 
-	// Write stats to the file
+	// Write stats to the file, without deduplication.
 	Write(statType string, statMap map[string]interface{}) error
 
 	// Set flag for durability - when set to true, each call to Write will
@@ -91,14 +91,7 @@ func (lst *logStats) SetDurable(durable bool) {
 	lst.durable = durable
 }
 
-func (lst *logStats) Write(statType string, statMap map[string]interface{}) error {
-	lst.lock.Lock()
-	defer lst.lock.Unlock()
-
-	bytes, err := lst.getBytesToWrite(statType, statMap)
-
-	f := lst.f
-
+func (lst *logStats) rotateIfNeeded() error {
 	// Rotate the logs only if current size of log file is more than
 	// specified sizeLimit. This can lead to files larger than
 	// sizeLimit.
@@ -107,8 +100,7 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 			fmt.Println("Log file", lst.fileName, "needs rotation")
 		}
 
-		var sz int
-		f, sz, err = rotate(lst.fileName, lst.numFiles)
+		f, sz, err := rotate(lst.fileName, lst.numFiles)
 		if err != nil {
 			return err
 		}
@@ -116,7 +108,13 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 		lst.sz = sz
 	}
 
-	err = writeToFile(f, bytes)
+	return nil
+}
+
+func (lst *logStats) writeAndCommit(bytes []byte) error {
+	f := lst.f
+
+	err := writeToFile(f, bytes)
 	if err != nil {
 		return err
 	}
@@ -127,6 +125,23 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 	}
 
 	return err
+}
+
+func (lst *logStats) Write(statType string, statMap map[string]interface{}) error {
+	lst.lock.Lock()
+	defer lst.lock.Unlock()
+
+	err := lst.rotateIfNeeded()
+	if err != nil {
+		return err
+	}
+
+	bytes, err := lst.getBytesToWrite(statType, statMap)
+	if err != nil {
+		return err
+	}
+
+	return lst.writeAndCommit(bytes)
 }
 
 func (lst *logStats) WriteDedupe(statType string, statMap map[string]interface{}) error {
@@ -204,7 +219,16 @@ func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat st
 		return nil, err
 	}
 
+	lStats := &logStats{
+		fileName:  fileName,
+		sizeLimit: sizeLimit,
+		numFiles:  numFiles,
+		f:         f,
+		sz:        sz,
+	}
+
 	lst := &dedupeLogStats{
+		logStats:     lStats,
 		fileName:     fileName,
 		sizeLimit:    sizeLimit,
 		numFiles:     numFiles,
@@ -216,44 +240,41 @@ func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat st
 }
 
 func (dlst *dedupeLogStats) WriteDedupe(statType string, statMap map[string]interface{}) error {
-	return dlst.Write(statType, statMap)
+	// return dlst.Write(statType, statMap)
+
+	dlst.lock.Lock()
+	defer dlst.lock.Unlock()
+
+	var bytes []byte
+	var err error
+	if dlst.needsRotation() {
+		dlst.resetPrevStatsMap()
+		bytes, err = dlst.logStats.getBytesToWrite(statType, statMap)
+
+	} else {
+		prevMap, ok := dlst.prevStatsMap[statType]
+		if !ok {
+			bytes, err = dlst.logStats.getBytesToWrite(statType, statMap)
+		} else {
+			filteredMap := make(map[string]interface{})
+			populateFilteredMap(prevMap, statMap, filteredMap)
+			bytes, err = dlst.logStats.getBytesToWrite(statType, filteredMap)
+		}
+	}
+
+	dlst.prevStatsMap[statType] = statMap
+
+	err = dlst.rotateIfNeeded()
+	if err != nil {
+		return err
+	}
+
+	return dlst.writeAndCommit(bytes)
+
 }
 
 func (dlst *dedupeLogStats) resetPrevStatsMap() {
 	dlst.prevStatsMap = make(map[string]map[string]interface{})
-}
-
-func (dlst *dedupeLogStats) getBytesToWrite(statType string, statMap map[string]interface{}) ([]byte, error) {
-	if dlst.needsRotation() {
-		dlst.resetPrevStatsMap()
-		return dlst.logStats.getBytesToWrite(statType, statMap)
-	}
-
-	var bytes []byte
-	var err error
-
-	prevMap, ok := dlst.prevStatsMap[statType]
-	if !ok {
-		bytes, err = dlst.logStats.getBytesToWrite(statType, statMap)
-		dlst.prevStatsMap[statType] = statMap
-	} else {
-		bytes, err = dlst.getFilteredBytes(statType, prevMap, statMap)
-	}
-
-	return bytes, err
-}
-
-func (dlst *dedupeLogStats) getFilteredBytes(statType string, prevMap, currMap map[string]interface{}) ([]byte, error) {
-	newMap := make(map[string]interface{})
-
-	getFilteredMap(prevMap, currMap, newMap)
-
-	bytes, err := json.Marshal(newMap)
-	if err != nil {
-		return nil, err
-	}
-
-	return dlst.formatBytes(statType, bytes), nil
 }
 
 //
@@ -278,7 +299,7 @@ func validateInput(fileName string, numFiles int) (string, error) {
 //
 // Utility funtions needed for filtering
 //
-func getFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
+func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 	for k, v := range currMap {
 		prev, ok := prevMap[k]
 		if !ok {
@@ -308,7 +329,7 @@ func getFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 
 		newM := make(map[string]interface{})
 		newMap[k] = newM
-		getFilteredMap(prevM, currM, newM)
+		populateFilteredMap(prevM, currM, newM)
 		if len(newM) == 0 {
 			delete(newMap, k)
 		}
