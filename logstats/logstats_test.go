@@ -22,7 +22,7 @@ func TestLogStatsBasics(t *testing.T) {
 	}
 
 	var statLogger LogStats
-	statLogger, err = NewLogStats(fileName, 32*1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
+	statLogger, err = NewLogStats(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
 	if err != nil {
 		t.Fatalf("TestLogStatsBasics failed with error %v", err)
 	}
@@ -87,28 +87,26 @@ func TestLogStatsRotation(t *testing.T) {
 }
 
 func TestDedupeLogStatsBasics(t *testing.T) {
-	DEBUG = 1
-
 	// Create a stats logger
 	tmpDir := os.TempDir()
 	fileName := filepath.Join(tmpDir, "dedupe_basics.log")
 
 	err := cleanup([]string{fileName})
 	if err != nil {
-		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
 
 	var statLogger LogStats
 	statLogger, err = NewDedupeLogStats(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
 	if err != nil {
-		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)
 	err = statLogger.WriteDedupe("kStats", stat)
 	if err != nil {
-		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
 
 	exp := make([]map[string]interface{}, 0)
@@ -118,11 +116,12 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 
 	exp = append(exp, vstat)
 
+	// Dedupe stat 1
 	stat = getSimpleStat(0)
 	stat["k1"] = int64(9876)
 	err = statLogger.WriteDedupe("kStats", stat)
 	if err != nil {
-		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
 
 	estat := make(map[string]interface{})
@@ -132,10 +131,108 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 	vstat["stat"] = estat
 	exp = append(exp, vstat)
 
+	// Dedupe stat 2
+	stat = getSimpleStat(0)
+	stat["k2"] = "ChangedValue"
+	stat["k1"] = int64(9876)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
+	}
+
+	estat = make(map[string]interface{})
+	estat["k2"] = "ChangedValue"
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = estat
+	exp = append(exp, vstat)
+
 	// Verify stats
 	err = verifyStats(exp, fileName)
 	if err != nil {
-		t.Fatalf("TestLogStatsBasics failed with error %v", err)
+		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
+	}
+}
+
+func TestDedupeLogStatsRotate(t *testing.T) {
+	// Create a stats logger
+	tmpDir := os.TempDir()
+	fileName := filepath.Join(tmpDir, "dedupe_rotate.log")
+
+	err := cleanup([]string{fileName})
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+
+	var statLogger LogStats
+	statLogger, err = NewDedupeLogStats(fileName, 75, 5, "2006-01-02T15:04:05.000-07:00")
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+
+	// Write dedupe stats
+	stat := getSimpleStat(0)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+
+	exp := make([]map[string]interface{}, 0)
+	vstat := make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = stat
+
+	exp = append(exp, vstat)
+
+	// Dedupe stat 1
+	stat = getSimpleStat(0)
+	stat["k1"] = int64(9876)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+
+	estat := make(map[string]interface{})
+	estat["k1"] = int64(9876)
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = estat
+	exp = append(exp, vstat)
+
+	// Dedupe stat 2
+	stat = getSimpleStat(0)
+	stat["k2"] = "ChangedValue"
+	stat["k1"] = int64(9876)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = stat
+	exp = append(exp, vstat)
+
+	// Dedupe stat 3
+	stat = getSimpleStat(0)
+	stat["k2"] = "ChangedValue"
+	stat["k1"] = int64(98)
+	err = statLogger.WriteDedupe("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+
+	estat = make(map[string]interface{})
+	estat["k1"] = int64(98)
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = estat
+	exp = append(exp, vstat)
+
+	// Verify stats
+	err = verifyStats(exp, fileName)
+	if err != nil {
+		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
 }
 
