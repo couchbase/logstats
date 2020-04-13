@@ -295,6 +295,7 @@ func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 		prev, ok := prevMap[k]
 		if !ok {
 			newMap[k] = v
+			continue
 		}
 
 		if equalInt64(v, prev) {
