@@ -27,6 +27,8 @@ func TestLogStatsBasics(t *testing.T) {
 		t.Fatalf("TestLogStatsBasics failed with error %v", err)
 	}
 
+	statLogger.(*logStats).disableCompression()
+
 	// Write a stat
 	stat := getSimpleStat(0)
 	err = statLogger.Write("kStats", stat)
@@ -63,6 +65,8 @@ func TestLogStatsRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TestLogStatsRotation failed with error %v", err)
 	}
+
+	statLogger.(*logStats).disableCompression()
 
 	// Write a stat
 	exp := make([]map[string]interface{}, 0)
@@ -101,6 +105,8 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
+
+	statLogger.(*dedupeLogStats).disableCompression()
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)
@@ -169,6 +175,8 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
+
+	statLogger.(*dedupeLogStats).disableCompression()
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)

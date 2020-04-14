@@ -1,6 +1,7 @@
 package logstats
 
 import (
+	"compress/gzip"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,9 @@ import (
 	"strings"
 )
 
+//
+// Utility functions for file handling
+//
 func getLogFileName(fileName string, num int) string {
 	// Assumption: fileName always has ".log" extention.
 
@@ -40,7 +44,7 @@ func openLogFile(fileName string) (*os.File, int, error) {
 	fname := getLogFileName(fileName, 0)
 	flag := os.O_CREATE | os.O_APPEND | os.O_WRONLY
 	var f *os.File
-	f, err = os.OpenFile(fname, flag, 0755)
+	f, err = os.OpenFile(fname, flag, 0744)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -67,11 +71,17 @@ func writeToFile(f *os.File, bytes []byte) error {
 	return err
 }
 
-func rotate(fileName string, numFiles int) (*os.File, int, error) {
+func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error) {
 	// Assumption: fileName always has ".log" extention.
 
 	name := fileName[:len(fileName)-4]
-	pattern := fmt.Sprintf("%s.*.log", name)
+	var pattern string
+	if compress {
+		pattern = fmt.Sprintf("%s.*.log.gz", name)
+	} else {
+		pattern = fmt.Sprintf("%s.*.log", name)
+	}
+
 	all, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, 0, err
@@ -109,5 +119,144 @@ func rotate(fileName string, numFiles int) (*os.File, int, error) {
 		}
 	}
 
+	if compress {
+		// compress filname.0.log to filename.1.log.gz
+		sourceFname := getLogFileName(fileName, 0)
+		targetFname := getLogFileName(fileName, 1)
+		err = compressFile(sourceFname, targetFname+".gz")
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
 	return openLogFile(fileName)
+}
+
+func compressFile(c, targetFname string) error {
+	flags := os.O_CREATE | os.O_TRUNC | os.O_WRONLY
+	f, err := os.OpenFile(targetFname, flags, 0744)
+	if err != nil {
+		return err
+	}
+
+	writer := gzip.NewWriter(f)
+
+	var r *os.File
+	r, err = os.Open(targetFname)
+	if err != nil {
+		return err
+	}
+
+	var finfo os.FileInfo
+	finfo, err = r.Stat()
+	if err != nil {
+		return err
+	}
+
+	buf := make([]byte, finfo.Size())
+	_, err = r.Read(buf)
+	if err != nil {
+		return err
+	}
+
+	_, err = writer.Write(buf)
+	if err != nil {
+		return err
+	}
+
+	return writer.Close()
+}
+
+//
+// Input validation functions
+//
+func validateInput(fileName string, numFiles int) (string, error) {
+	if numFiles > MAX_NUM_FILES {
+		return fileName, fmt.Errorf("NewLogStats: More than %v files not supported.", MAX_NUM_FILES)
+	}
+
+	if numFiles < 1 {
+		return fileName, fmt.Errorf("NewLogStats: Unsupported file count %v", numFiles)
+	}
+
+	if !strings.HasSuffix(fileName, ".log") {
+		fileName = fileName + ".log"
+	}
+
+	return fileName, nil
+}
+
+//
+// Utility funtions needed for filtering
+//
+func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
+	for k, v := range currMap {
+		prev, ok := prevMap[k]
+		if !ok {
+			newMap[k] = v
+			continue
+		}
+
+		if equalInt64(v, prev) {
+			continue
+		}
+
+		if equalStrings(v, prev) {
+			continue
+		}
+
+		var currM, prevM map[string]interface{}
+		currM, ok = v.(map[string]interface{})
+		if !ok {
+			newMap[k] = v
+			continue
+		}
+
+		prevM, ok = prev.(map[string]interface{})
+		if !ok {
+			newMap[k] = v
+			continue
+		}
+
+		newM := make(map[string]interface{})
+		newMap[k] = newM
+		populateFilteredMap(prevM, currM, newM)
+		if len(newM) == 0 {
+			delete(newMap, k)
+		}
+	}
+}
+
+func equalInt64(v, prev interface{}) bool {
+	var vint, prevint int64
+	var ok bool
+
+	vint, ok = v.(int64)
+	if !ok {
+		return false
+	}
+
+	prevint, ok = prev.(int64)
+	if !ok {
+		return false
+	}
+
+	return vint == prevint
+}
+
+func equalStrings(v, prev interface{}) bool {
+	var vstr, prevstr string
+	var ok bool
+
+	vstr, ok = v.(string)
+	if !ok {
+		return false
+	}
+
+	prevstr, ok = prev.(string)
+	if !ok {
+		return false
+	}
+
+	return vstr == prevstr
 }

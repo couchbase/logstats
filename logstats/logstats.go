@@ -37,10 +37,11 @@ type logStats struct {
 	numFiles  int
 	tsFormat  string
 
-	lock    sync.Mutex
-	sz      int
-	f       *os.File
-	durable bool
+	lock     sync.Mutex
+	sz       int
+	f        *os.File
+	durable  bool
+	compress bool
 }
 
 //
@@ -77,6 +78,7 @@ func NewLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) 
 		tsFormat:  tsFormat,
 		f:         f,
 		sz:        sz,
+		compress:  true,
 	}
 	return lst, nil
 }
@@ -97,7 +99,12 @@ func (lst *logStats) rotateIfNeeded() error {
 			fmt.Println("Log file", lst.fileName, "needs rotation")
 		}
 
-		f, sz, err := rotate(lst.fileName, lst.numFiles)
+		err := lst.f.Close()
+		if err != nil {
+			return err
+		}
+
+		f, sz, err := rotate(lst.fileName, lst.numFiles, lst.compress)
 		if err != nil {
 			return err
 		}
@@ -151,7 +158,7 @@ func (lst *logStats) getBytesToWrite(statType string, statMap map[string]interfa
 }
 
 func (lst *logStats) formatBytes(statType string, bytes []byte) []byte {
-	bytes = append(bytes, []byte("\n")...)
+	bytes = append(bytes, byte(10))
 
 	prefix := []byte(strings.Join([]string{time.Now().Format(lst.tsFormat), statType, ""}, " "))
 	bytes = append(prefix, bytes...)
@@ -160,6 +167,13 @@ func (lst *logStats) formatBytes(statType string, bytes []byte) []byte {
 
 func (lst *logStats) needsRotation() bool {
 	return lst.sz >= lst.sizeLimit
+}
+
+func (lst *logStats) disableCompression() {
+	lst.lock.Lock()
+	defer lst.lock.Unlock()
+
+	lst.compress = false
 }
 
 //
@@ -176,10 +190,11 @@ type dedupeLogStats struct {
 	numFiles  int
 	tsFormat  string
 
-	lock    sync.Mutex
-	sz      int
-	f       *os.File
-	durable bool
+	lock     sync.Mutex
+	sz       int
+	f        *os.File
+	durable  bool
+	compress bool
 
 	prevStatsMap map[string]map[string]interface{}
 }
@@ -218,6 +233,7 @@ func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat st
 		numFiles:  numFiles,
 		f:         f,
 		sz:        sz,
+		compress:  true,
 	}
 
 	lst := &dedupeLogStats{
@@ -227,6 +243,7 @@ func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat st
 		numFiles:     numFiles,
 		f:            f,
 		sz:           sz,
+		compress:     true,
 		prevStatsMap: make(map[string]map[string]interface{}),
 	}
 	return lst, nil
@@ -266,98 +283,4 @@ func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{
 
 func (dlst *dedupeLogStats) resetPrevStatsMap() {
 	dlst.prevStatsMap = make(map[string]map[string]interface{})
-}
-
-//
-// Input validation functions
-//
-func validateInput(fileName string, numFiles int) (string, error) {
-	if numFiles > MAX_NUM_FILES {
-		return fileName, fmt.Errorf("NewLogStats: More than %v files not supported.", MAX_NUM_FILES)
-	}
-
-	if numFiles < 1 {
-		return fileName, fmt.Errorf("NewLogStats: Unsupported file count %v", numFiles)
-	}
-
-	if !strings.HasSuffix(fileName, ".log") {
-		fileName = fileName + ".log"
-	}
-
-	return fileName, nil
-}
-
-//
-// Utility funtions needed for filtering
-//
-func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
-	for k, v := range currMap {
-		prev, ok := prevMap[k]
-		if !ok {
-			newMap[k] = v
-			continue
-		}
-
-		if equalInt64(v, prev) {
-			continue
-		}
-
-		if equalStrings(v, prev) {
-			continue
-		}
-
-		var currM, prevM map[string]interface{}
-		currM, ok = v.(map[string]interface{})
-		if !ok {
-			newMap[k] = v
-			continue
-		}
-
-		prevM, ok = prev.(map[string]interface{})
-		if !ok {
-			newMap[k] = v
-			continue
-		}
-
-		newM := make(map[string]interface{})
-		newMap[k] = newM
-		populateFilteredMap(prevM, currM, newM)
-		if len(newM) == 0 {
-			delete(newMap, k)
-		}
-	}
-}
-
-func equalInt64(v, prev interface{}) bool {
-	var vint, prevint int64
-	var ok bool
-
-	vint, ok = v.(int64)
-	if !ok {
-		return false
-	}
-
-	prevint, ok = prev.(int64)
-	if !ok {
-		return false
-	}
-
-	return vint == prevint
-}
-
-func equalStrings(v, prev interface{}) bool {
-	var vstr, prevstr string
-	var ok bool
-
-	vstr, ok = v.(string)
-	if !ok {
-		return false
-	}
-
-	prevstr, ok = prev.(string)
-	if !ok {
-		return false
-	}
-
-	return vstr == prevstr
 }
