@@ -13,14 +13,18 @@ import (
 //
 // Utility functions for file handling
 //
-func getLogFileName(fileName string, num int) string {
+func getLogFileName(fileName string, num int, compress bool) string {
 	// Assumption: fileName always has ".log" extention.
 
 	name := fileName[:len(fileName)-4]
 	numLen := len(fmt.Sprintf("%d", MAX_NUM_FILES))
 	numLenFormat := fmt.Sprintf("%%0%dd", numLen)
 	format := fmt.Sprintf("%%s.%s.%%s", numLenFormat)
-	return fmt.Sprintf(format, name, num, "log")
+	fname := fmt.Sprintf(format, name, num, "log")
+	if compress && num > 0 {
+		fname = fname + ".gz"
+	}
+	return fname
 }
 
 func getLogFileNumber(fileName string) (int, error) {
@@ -29,7 +33,12 @@ func getLogFileNumber(fileName string) (int, error) {
 		return 0, fmt.Errorf("Unexpected log file name")
 	}
 
-	return strconv.Atoi(names[len(names)-2])
+	idx := len(names) - 2
+	if names[len(names)-1] == "gz" {
+		idx = len(names) - 3
+	}
+
+	return strconv.Atoi(names[idx])
 }
 
 func openLogFile(fileName string) (*os.File, int, error) {
@@ -41,7 +50,7 @@ func openLogFile(fileName string) (*os.File, int, error) {
 		return nil, 0, err
 	}
 
-	fname := getLogFileName(fileName, 0)
+	fname := getLogFileName(fileName, 0, false)
 	flag := os.O_CREATE | os.O_APPEND | os.O_WRONLY
 	var f *os.File
 	f, err = os.OpenFile(fname, flag, 0744)
@@ -104,7 +113,7 @@ func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error)
 				continue
 			}
 
-			newFname = getLogFileName(fileName, num)
+			newFname = getLogFileName(fileName, num, compress)
 		} else {
 			newFname = all[i+1]
 		}
@@ -121,9 +130,14 @@ func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error)
 
 	if compress {
 		// compress filname.0.log to filename.1.log.gz
-		sourceFname := getLogFileName(fileName, 0)
-		targetFname := getLogFileName(fileName, 1)
-		err = compressFile(sourceFname, targetFname+".gz")
+		sourceFname := getLogFileName(fileName, 0, compress)
+		targetFname := getLogFileName(fileName, 1, compress)
+		err = compressFile(sourceFname, targetFname)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		err = os.Remove(sourceFname)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -132,7 +146,7 @@ func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error)
 	return openLogFile(fileName)
 }
 
-func compressFile(c, targetFname string) error {
+func compressFile(sourceFname, targetFname string) error {
 	flags := os.O_CREATE | os.O_TRUNC | os.O_WRONLY
 	f, err := os.OpenFile(targetFname, flags, 0744)
 	if err != nil {
@@ -142,7 +156,7 @@ func compressFile(c, targetFname string) error {
 	writer := gzip.NewWriter(f)
 
 	var r *os.File
-	r, err = os.Open(targetFname)
+	r, err = os.Open(sourceFname)
 	if err != nil {
 		return err
 	}
@@ -159,7 +173,20 @@ func compressFile(c, targetFname string) error {
 		return err
 	}
 
+	if DEBUG != 0 {
+		fmt.Println("compressFile: Read", len(buf), "bytes from the file:", sourceFname)
+	}
+
 	_, err = writer.Write(buf)
+	if err != nil {
+		return err
+	}
+
+	if DEBUG != 0 {
+		fmt.Println("compressFile: Written", len(buf), "bytes to the file:", targetFname)
+	}
+
+	err = r.Close()
 	if err != nil {
 		return err
 	}

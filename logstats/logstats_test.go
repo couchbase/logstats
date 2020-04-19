@@ -1,8 +1,10 @@
 package logstats
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -44,7 +46,7 @@ func TestLogStatsBasics(t *testing.T) {
 	exp = append(exp, vstat)
 
 	// Verify stats
-	err = verifyStats(exp, fileName)
+	err = verifyStats(exp, fileName, false)
 	if err != nil {
 		t.Fatalf("TestLogStatsBasics failed with error %v", err)
 	}
@@ -84,7 +86,7 @@ func TestLogStatsRotation(t *testing.T) {
 	}
 
 	// Verify stats
-	err = verifyStats(exp, fileName)
+	err = verifyStats(exp, fileName, false)
 	if err != nil {
 		t.Fatalf("TestLogStatsRotation failed with error %v", err)
 	}
@@ -154,7 +156,7 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 	exp = append(exp, vstat)
 
 	// Verify stats
-	err = verifyStats(exp, fileName)
+	err = verifyStats(exp, fileName, false)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
@@ -171,7 +173,7 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	}
 
 	var statLogger LogStats
-	statLogger, err = NewDedupeLogStats(fileName, 75, 5, "2006-01-02T15:04:05.000-07:00")
+	statLogger, err = NewDedupeLogStats(fileName, 128, 5, "2006-01-02T15:04:05.000-07:00")
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
@@ -238,9 +240,91 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	exp = append(exp, vstat)
 
 	// Verify stats
-	err = verifyStats(exp, fileName)
+	err = verifyStats(exp, fileName, false)
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
+	}
+}
+
+func TestCompressionWithRotation(t *testing.T) {
+	// Create a stats logger
+	tmpDir := os.TempDir()
+	fileName := filepath.Join(tmpDir, "compress_rotate.log")
+
+	err := cleanup([]string{fileName})
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
+	}
+
+	var statLogger LogStats
+	statLogger, err = NewDedupeLogStats(fileName, 128, 5, "2006-01-02T15:04:05.000-07:00")
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
+	}
+
+	// Write dedupe stats
+	stat := getSimpleStat(0)
+	err = statLogger.Write("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
+	}
+
+	exp := make([]map[string]interface{}, 0)
+	vstat := make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = stat
+
+	exp = append(exp, vstat)
+
+	// Dedupe stat 1
+	stat = getSimpleStat(0)
+	stat["k1"] = int64(9876)
+	err = statLogger.Write("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
+	}
+
+	estat := make(map[string]interface{})
+	estat["k1"] = int64(9876)
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = estat
+	exp = append(exp, vstat)
+
+	// Dedupe stat 2
+	stat = getSimpleStat(0)
+	stat["k2"] = "ChangedValue"
+	stat["k1"] = int64(9876)
+	err = statLogger.Write("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
+	}
+
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = stat
+	exp = append(exp, vstat)
+
+	// Dedupe stat 3
+	stat = getSimpleStat(0)
+	stat["k2"] = "ChangedValue"
+	stat["k1"] = int64(98)
+	err = statLogger.Write("kStats", stat)
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
+	}
+
+	estat = make(map[string]interface{})
+	estat["k1"] = int64(98)
+	vstat = make(map[string]interface{})
+	vstat["type"] = "kStats"
+	vstat["stat"] = estat
+	exp = append(exp, vstat)
+
+	// Verify stats
+	err = verifyStats(exp, fileName, true)
+	if err != nil {
+		t.Fatalf("TestCompressionWithRotation failed with error %v", err)
 	}
 }
 
@@ -265,6 +349,15 @@ func cleanup(paths []string) error {
 			return err
 		}
 
+		cpattern := fmt.Sprintf("%s.*.log.gz", name)
+		var call []string
+		call, err = filepath.Glob(cpattern)
+		if err != nil {
+			return err
+		}
+
+		all = append(all, call...)
+
 		for _, name := range all {
 			err := os.RemoveAll(name)
 			if err != nil {
@@ -276,13 +369,34 @@ func cleanup(paths []string) error {
 	return nil
 }
 
-func getAllLogsFromFiles(fileName string) ([]string, error) {
+func getAllLogsFromFiles(fileName string, compress bool) ([]string, error) {
 
 	name := fileName[:len(fileName)-4]
-	pattern := fmt.Sprintf("%s.*.log", name)
+	var pattern string
+	if compress {
+		pattern = fmt.Sprintf("%s.*.log.gz", name)
+	} else {
+		pattern = fmt.Sprintf("%s.*.log", name)
+	}
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, err
+	}
+
+	if compress {
+		fname := getLogFileName(fileName, 0, true)
+		f, err := os.Open(fname)
+		if err != nil {
+			// Expecting at least one file to be present.
+			return nil, err
+		}
+
+		err = f.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		files = append(files, fname)
 	}
 
 	sort.Strings(files)
@@ -298,6 +412,12 @@ func getAllLogsFromFiles(fileName string) ([]string, error) {
 			return nil, err
 		}
 
+		var num int
+		num, err = getLogFileNumber(fname)
+		if err != nil {
+			return nil, err
+		}
+
 		var finfo os.FileInfo
 		finfo, err = f.Stat()
 		if err != nil {
@@ -305,14 +425,30 @@ func getAllLogsFromFiles(fileName string) ([]string, error) {
 		}
 
 		buf := make([]byte, finfo.Size())
-		_, err = f.Read(buf)
-		if err != nil {
-			return nil, err
+
+		if compress && num != 0 {
+			buf = make([]byte, finfo.Size()*3)
+			reader, err := gzip.NewReader(f)
+			if err != nil {
+				return nil, err
+			}
+
+			var n int
+			n, err = reader.Read(buf)
+			if err != nil && err != io.EOF {
+				fmt.Println("Error in reading file", fname, ":", err, n, finfo.Size())
+				return nil, err
+			}
+			buf = buf[:n]
+		} else {
+			_, err = f.Read(buf)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		s := string(buf)
 		flines := strings.Split(s, "\n")
-
 		if len(flines[len(flines)-1]) == 0 {
 			flines = flines[:len(flines)-1]
 		}
@@ -322,14 +458,30 @@ func getAllLogsFromFiles(fileName string) ([]string, error) {
 	return lines, nil
 }
 
-func verifyStats(exp []map[string]interface{}, fileName string) error {
+func verifyStats(exp []map[string]interface{}, fileName string, compress bool) error {
 
-	lines, err := getAllLogsFromFiles(fileName)
+	lines, err := getAllLogsFromFiles(fileName, compress)
 	if err != nil {
+		fmt.Println("Error in getAllLogsFromFiles:", err)
 		return err
 	}
 
+	printlines := func() {
+		for _, l := range lines {
+			fmt.Println(l)
+		}
+	}
+
 	if len(lines) != len(exp) {
+		if DEBUG != 0 {
+			fmt.Println("Actual")
+			printlines()
+
+			fmt.Println("Expected")
+			for _, l := range exp {
+				fmt.Println(l)
+			}
+		}
 		return fmt.Errorf("Unexpected number of lines in the log file, exp %v actual %v",
 			len(exp), len(lines))
 	}
@@ -337,7 +489,11 @@ func verifyStats(exp []map[string]interface{}, fileName string) error {
 	for i, line := range lines {
 		comps := strings.SplitN(line, " ", 3)
 		if len(comps) != 3 {
-			return fmt.Errorf("Unrecognised stat format")
+			if DEBUG != 0 {
+				printlines()
+			}
+
+			return fmt.Errorf("Unrecognised stat format for line: %v", line)
 		}
 
 		ex := exp[i]
