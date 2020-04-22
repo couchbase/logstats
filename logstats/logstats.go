@@ -26,6 +26,9 @@ type LogStats interface {
 	// Set flag for durability - when set to true, each call to Write will
 	// also call os.File.Sync()
 	SetDurable(durable bool)
+
+	// Closes the log file if open.
+	Close()
 }
 
 //
@@ -42,6 +45,7 @@ type logStats struct {
 	f        *os.File
 	durable  bool
 	compress bool
+	closed   bool
 }
 
 //
@@ -135,6 +139,10 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 	lst.lock.Lock()
 	defer lst.lock.Unlock()
 
+	if lst.closed {
+		return fmt.Errorf("Use of closed logStats object")
+	}
+
 	err := lst.rotateIfNeeded()
 	if err != nil {
 		return err
@@ -174,6 +182,22 @@ func (lst *logStats) disableCompression() {
 	defer lst.lock.Unlock()
 
 	lst.compress = false
+}
+
+func (lst *logStats) Close() {
+	lst.lock.Lock()
+	defer lst.lock.Unlock()
+
+	if lst.closed {
+		return
+	}
+
+	if lst.f != nil {
+		lst.f.Close()
+	}
+
+	lst.f = nil
+	lst.closed = true
 }
 
 //
@@ -254,6 +278,10 @@ func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat st
 func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{}) error {
 	dlst.lock.Lock()
 	defer dlst.lock.Unlock()
+
+	if dlst.closed {
+		return fmt.Errorf("Use of closed dedupeLogStats object")
+	}
 
 	var bytes []byte
 	var err error

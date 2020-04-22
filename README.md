@@ -47,12 +47,20 @@ Unlike language-native logger framework implementations, in this framework sizeL
 For example, if the size limit is 100 and the first log message is 128 bytes, the entire log message will be written to the file - as this logging framework does not break up the log messages across multiple files. Recommendation is to use multiple small sized stat map (instead of using as single very large stats map), so that the excess bytes written to the file, beyond size limit will be limited. statType parameter - in `Write` interface- can be used to divide the stats among multiple sub-stats.
 
 ## Supported data types for deduplication.
-Currently, deduplication is supported only for the values of type `int64`, `string` and `nested map`. In case of the nested maps, deduplucation for values within nested maps is supported.
+Currently, deduplication is supported only for the values of type `int64`, `string`, `uint64`, `bool` and `nested map`. In case of the nested maps, deduplucation for values within nested maps is supported.
+
+## File Names
+Unlike language-native logging frameworks, the log file names used by this library preserve extensions. Also, the first file name also has log number embedded in it. So, if the log file name provided by the user is "abcd.log", the first log file created by the framework will have name "abcd.00.log". The Length of the embedded log number depends on maximum number of log files supported by the framework, (and not the max number of files provided by the user while creating the logStats object), which is currently 99.
+
+## Single Process Access
+It is recommended to use this logging framework with one log file being used by only 1 process. Same log file being used by multiple processes can cause unexpected results.
 
 # How deduplication works?
 The stats deduplication will happen only within a single file. Once the file gets rotated, the log messages will not get deduplicating across multiple files.
 
 For example, for the initial stat values `{"k1": 10, "k2": 20, "k3": 30}`, if only the value of `"k1"` changes to `100`, then the next log message in the same log file will be `{"k1": 100}`. Note that `"k2": 20, "k3": 30` is not written to the file due to deduplication. But if the next log message were to be written to the different log file (due to log rotation), entire set of stats - `{"k1": 100, "k2": 20, "k3": 30}` - will be written to the new (rotated) log file.
+
+Also note that, deduplication is not preserved across logger object re-initializations. This means if the logger object is re-initialized from an earlier state (situations like process restart), deduplication starts afresh, i.e. first log message will be written without any deduplication.
 
 # Performance Guidelines
 ## Avoid very large stats maps
