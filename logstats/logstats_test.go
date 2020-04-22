@@ -328,15 +328,58 @@ func TestCompressionWithRotation(t *testing.T) {
 	}
 }
 
+func TestNumFiles(t *testing.T) {
+	// Create a stats logger
+	tmpDir := os.TempDir()
+	fileName := filepath.Join(tmpDir, "num_files.log")
+
+	err := cleanup([]string{fileName})
+	if err != nil {
+		t.Fatalf("TestNumFiles failed with error %v", err)
+	}
+
+	// Ignore deduplication even if dedupe is being used.
+	var statLogger LogStats
+	statLogger, err = NewDedupeLogStats(fileName, 32, 3, "2006-01-02T15:04:05.000-07:00")
+	if err != nil {
+		t.Fatalf("TestNumFiles failed with error %v", err)
+	}
+
+	exp := make([]map[string]interface{}, 0)
+	for i := 0; i < 5; i++ {
+		stat := getSimpleStat(i)
+		err = statLogger.Write("kStats", stat)
+		if err != nil {
+			t.Fatalf("TestNumFiles failed with error %v", err)
+		}
+
+		vstat := make(map[string]interface{})
+		vstat["type"] = "kStats"
+		vstat["stat"] = stat
+		exp = append(exp, vstat)
+	}
+
+	// First two stats will get rotate out of retention due to numFiles.
+	exp = exp[2:]
+
+	// Verify stats
+	err = verifyStats(exp, fileName, true)
+	if err != nil {
+		t.Fatalf("TestNumFiles failed with error %v", err)
+	}
+}
+
 func getSimpleStat(seed int) map[string]interface{} {
 	stat := make(map[string]interface{})
 	stat["k1"] = int64(seed + 10)
 	stat["k2"] = fmt.Sprintf("Value%v", seed+2)
+	stat["k3"] = false
 
 	k3stat := make(map[string]interface{})
 	k3stat["k31"] = int64(300*seed + 10)
 	k3stat["k32"] = fmt.Sprintf("Value%v", 30*seed+2)
-	stat["k3"] = k3stat
+	k3stat["k33"] = true
+	stat["k4"] = k3stat
 	return stat
 }
 

@@ -228,6 +228,14 @@ func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 			continue
 		}
 
+		if equalBool(v, prev) {
+			continue
+		}
+
+		if equalUint64(v, prev) {
+			continue
+		}
+
 		if equalStrings(v, prev) {
 			continue
 		}
@@ -269,6 +277,40 @@ func equalInt64(v, prev interface{}) bool {
 	}
 
 	return vint == prevint
+}
+
+func equalUint64(v, prev interface{}) bool {
+	var vint, prevint uint64
+	var ok bool
+
+	vint, ok = v.(uint64)
+	if !ok {
+		return false
+	}
+
+	prevint, ok = prev.(uint64)
+	if !ok {
+		return false
+	}
+
+	return vint == prevint
+}
+
+func equalBool(v, prev interface{}) bool {
+	var vbool, prevbool bool
+	var ok bool
+
+	vbool, ok = v.(bool)
+	if !ok {
+		return false
+	}
+
+	prevbool, ok = prev.(bool)
+	if !ok {
+		return false
+	}
+
+	return vbool == prevbool
 }
 
 func equalStrings(v, prev interface{}) bool {
