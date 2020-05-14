@@ -398,13 +398,13 @@ func getSimpleStat(seed int) map[string]interface{} {
 func cleanup(paths []string) error {
 	for _, p := range paths {
 		name := p[:len(p)-4]
-		pattern := fmt.Sprintf("%s.*.log", name)
+		pattern := fmt.Sprintf("%s.log*", name)
 		all, err := filepath.Glob(pattern)
 		if err != nil {
 			return err
 		}
 
-		cpattern := fmt.Sprintf("%s.*.log.gz", name)
+		cpattern := fmt.Sprintf("%s.log.*.gz", name)
 		var call []string
 		call, err = filepath.Glob(cpattern)
 		if err != nil {
@@ -429,9 +429,9 @@ func getAllLogsFromFiles(fileName string, compress bool) ([]string, error) {
 	name := fileName[:len(fileName)-4]
 	var pattern string
 	if compress {
-		pattern = fmt.Sprintf("%s.*.log.gz", name)
+		pattern = fmt.Sprintf("%s.log.*.gz", name)
 	} else {
-		pattern = fmt.Sprintf("%s.*.log", name)
+		pattern = fmt.Sprintf("%s.log*", name)
 	}
 	files, err := filepath.Glob(pattern)
 	if err != nil {

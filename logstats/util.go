@@ -15,12 +15,15 @@ import (
 //
 func getLogFileName(fileName string, num int, compress bool) string {
 	// Assumption: fileName always has ".log" extention.
-
 	name := fileName[:len(fileName)-4]
-	numLen := len(fmt.Sprintf("%d", MAX_NUM_FILES))
-	numLenFormat := fmt.Sprintf("%%0%dd", numLen)
-	format := fmt.Sprintf("%%s.%s.%%s", numLenFormat)
-	fname := fmt.Sprintf(format, name, num, "log")
+
+	var fname string
+	if num > 0 {
+		fname = fmt.Sprintf("%s.%s.%d", name, "log", num)
+	} else {
+		fname = fmt.Sprintf("%s.%s", name, "log")
+	}
+
 	if compress && num > 0 {
 		fname = fname + ".gz"
 	}
@@ -29,13 +32,21 @@ func getLogFileName(fileName string, num int, compress bool) string {
 
 func getLogFileNumber(fileName string) (int, error) {
 	names := strings.Split(fileName, ".")
-	if len(names) < 3 {
+	if len(names) < 2 || len(names) > 4 {
 		return 0, fmt.Errorf("Unexpected log file name")
 	}
 
-	idx := len(names) - 2
+	if len(names) == 2 {
+		return 0, nil
+	}
+
+	if names[len(names)-1] == "log" {
+		return 0, nil
+	}
+
+	idx := len(names) - 1
 	if names[len(names)-1] == "gz" {
-		idx = len(names) - 3
+		idx = len(names) - 2
 	}
 
 	return strconv.Atoi(names[idx])
@@ -86,9 +97,9 @@ func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error)
 	name := fileName[:len(fileName)-4]
 	var pattern string
 	if compress {
-		pattern = fmt.Sprintf("%s.*.log.gz", name)
+		pattern = fmt.Sprintf("%s.log.*.gz", name)
 	} else {
-		pattern = fmt.Sprintf("%s.*.log", name)
+		pattern = fmt.Sprintf("%s.log*", name)
 	}
 
 	all, err := filepath.Glob(pattern)
