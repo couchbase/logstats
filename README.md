@@ -49,9 +49,6 @@ For example, if the size limit is 100 and the first log message is 128 bytes, th
 ## Supported data types for deduplication.
 Currently, deduplication is supported only for the values of type `int64`, `string`, `uint64`, `bool` and `nested map`. In case of the nested maps, deduplucation for values within nested maps is supported.
 
-## File Names
-Unlike language-native logging frameworks, the log file names used by this library preserve extensions. Also, the first file name also has log number embedded in it. So, if the log file name provided by the user is "abcd.log", the first log file created by the framework will have name "abcd.00.log". The Length of the embedded log number depends on maximum number of log files supported by the framework, (and not the max number of files provided by the user while creating the logStats object), which is currently 99.
-
 ## Single Process Access
 It is recommended to use this logging framework with one log file being used by only 1 process. Same log file being used by multiple processes can cause unexpected results.
 
