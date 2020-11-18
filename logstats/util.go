@@ -64,7 +64,7 @@ func openLogFile(fileName string) (*os.File, int, error) {
 	fname := getLogFileName(fileName, 0, false)
 	flag := os.O_CREATE | os.O_APPEND | os.O_WRONLY
 	var f *os.File
-	f, err = os.OpenFile(fname, flag, 0744)
+	f, err = os.OpenFile(fname, flag, 0644)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -159,7 +159,7 @@ func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error)
 
 func compressFile(sourceFname, targetFname string) error {
 	flags := os.O_CREATE | os.O_TRUNC | os.O_WRONLY
-	f, err := os.OpenFile(targetFname, flags, 0744)
+	f, err := os.OpenFile(targetFname, flags, 0644)
 	if err != nil {
 		return err
 	}
