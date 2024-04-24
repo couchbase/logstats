@@ -25,9 +25,7 @@ const (
 
 var DEBUG int = 0
 
-//
 // LogStats interface
-//
 type LogStats interface {
 
 	// Write stats to the file.
@@ -41,9 +39,7 @@ type LogStats interface {
 	Close()
 }
 
-//
 // logStats. Supports regular log rotation.
-//
 type logStats struct {
 	fileName  string
 	sizeLimit int
@@ -58,21 +54,24 @@ type logStats struct {
 	closed   bool
 }
 
-//
 // Create new LogStats object.
 // Paramters:
 // fileName:  Name of the log file. If the file name does not have ".log"
-//            extension, it will be added internally - and the final log
-//            file will have the ".log" extension.
+//
+//	extension, it will be added internally - and the final log
+//	file will have the ".log" extension.
+//
 // sizeLimit: Size limit for one file. It is not a hard limit. A single
-//            log message cannot cross the log file boundary. So, as long
-//            as the current file has not reached its size limit, the
-//            incoming log message will be written to the current file.
-//            This can lead to log files larger than sizeLimit.
+//
+//	log message cannot cross the log file boundary. So, as long
+//	as the current file has not reached its size limit, the
+//	incoming log message will be written to the current file.
+//	This can lead to log files larger than sizeLimit.
+//
 // numFiles:  Number of log files to be maintained.
 // tsFormat:  Format in which the timestamps in the log messages are
-//            to be logged.
 //
+//	to be logged.
 func NewLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) (*logStats, error) {
 	var err error
 	fileName, err = validateInput(fileName, numFiles)
@@ -210,12 +209,10 @@ func (lst *logStats) Close() {
 	lst.closed = true
 }
 
-//
 // dedupeLogStats. Supports log rotation. Stats get deduplicated across
 // consecutive log messages of same type. This can save a lot of space
 // but it comes with a cost that the individual log message cannot be
 // consumed as-is. Deduplication resets on log rotation.
-//
 type dedupeLogStats struct {
 	*logStats
 
@@ -233,21 +230,24 @@ type dedupeLogStats struct {
 	prevStatsMap map[string]map[string]interface{}
 }
 
-//
 // Create new LogStats object.
 // Paramters:
 // fileName:  Name of the log file. If the file name does not have ".log"
-//            extension, it will be added internally - and the final log
-//            file will have the ".log" extension.
+//
+//	extension, it will be added internally - and the final log
+//	file will have the ".log" extension.
+//
 // sizeLimit: Size limit for one file. It is not a hard limit. A single
-//            log message cannot cross the log file boundary. So, as long
-//            as the current file has not reached its size limit, the
-//            incoming log message will be written to the current file.
-//            This can lead to log files larger than sizeLimit.
+//
+//	log message cannot cross the log file boundary. So, as long
+//	as the current file has not reached its size limit, the
+//	incoming log message will be written to the current file.
+//	This can lead to log files larger than sizeLimit.
+//
 // numFiles:  Number of log files to be maintained.
 // tsFormat:  Format in which the timestamps in the log messages are
-//            to be logged.
 //
+//	to be logged.
 func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) (*dedupeLogStats, error) {
 
 	var err error
@@ -323,4 +323,21 @@ func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{
 
 func (dlst *dedupeLogStats) resetPrevStatsMap() {
 	dlst.prevStatsMap = make(map[string]map[string]interface{})
+}
+
+var gStatLogger LogStats
+var gStatLoggerLock = sync.Mutex{}
+
+func SetGlobalStatLogger(sLogger LogStats) {
+	gStatLoggerLock.Lock()
+	defer gStatLoggerLock.Unlock()
+
+	gStatLogger = sLogger
+}
+
+func GetGlobalStatLogger() LogStats {
+	gStatLoggerLock.Lock()
+	defer gStatLoggerLock.Unlock()
+
+	return gStatLogger
 }

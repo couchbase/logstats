@@ -20,9 +20,7 @@ import (
 	"strings"
 )
 
-//
 // Utility functions for file handling
-//
 func getLogFileName(fileName string, num int, compress bool) string {
 	// Assumption: fileName always has ".log" extention.
 	name := fileName[:len(fileName)-4]
@@ -66,7 +64,7 @@ func openLogFile(fileName string) (*os.File, int, error) {
 	// Assumption: fileName always has ".log" extention.
 
 	dir := filepath.Dir(fileName)
-	err := os.MkdirAll(dir, 0755)
+	err := os.MkdirAll(dir, 0o755)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -74,7 +72,7 @@ func openLogFile(fileName string) (*os.File, int, error) {
 	fname := getLogFileName(fileName, 0, false)
 	flag := os.O_CREATE | os.O_APPEND | os.O_WRONLY
 	var f *os.File
-	f, err = os.OpenFile(fname, flag, 0644)
+	f, err = os.OpenFile(fname, flag, 0o644)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -169,7 +167,7 @@ func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error)
 
 func compressFile(sourceFname, targetFname string) error {
 	flags := os.O_CREATE | os.O_TRUNC | os.O_WRONLY
-	f, err := os.OpenFile(targetFname, flags, 0644)
+	f, err := os.OpenFile(targetFname, flags, 0o644)
 	if err != nil {
 		return err
 	}
@@ -215,9 +213,7 @@ func compressFile(sourceFname, targetFname string) error {
 	return writer.Close()
 }
 
-//
 // Input validation functions
-//
 func validateInput(fileName string, numFiles int) (string, error) {
 	if numFiles > MAX_NUM_FILES {
 		return fileName, fmt.Errorf("NewLogStats: More than %v files not supported.", MAX_NUM_FILES)
@@ -234,9 +230,7 @@ func validateInput(fileName string, numFiles int) (string, error) {
 	return fileName, nil
 }
 
-//
 // Utility funtions needed for filtering
-//
 func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 	for k, v := range currMap {
 		prev, ok := prevMap[k]
@@ -245,40 +239,56 @@ func populateFilteredMap(prevMap, currMap, newMap map[string]interface{}) {
 			continue
 		}
 
-		if equalInt64(v, prev) {
-			continue
-		}
-
-		if equalBool(v, prev) {
-			continue
-		}
-
-		if equalUint64(v, prev) {
-			continue
-		}
-
-		if equalStrings(v, prev) {
-			continue
-		}
-
-		var currM, prevM map[string]interface{}
-		currM, ok = v.(map[string]interface{})
-		if !ok {
+		switch val := v.(type) {
+		case int64:
+			if equalInt64(v, prev) {
+				continue
+			}
 			newMap[k] = v
-			continue
-		}
-
-		prevM, ok = prev.(map[string]interface{})
-		if !ok {
+			break
+		case bool:
+			if equalBool(v, prev) {
+				continue
+			}
 			newMap[k] = v
-			continue
-		}
+			break
+		case uint64:
+			if equalUint64(v, prev) {
+				continue
+			}
+			newMap[k] = v
+			break
+		case string:
+			if equalStrings(v, prev) {
+				continue
+			}
+			newMap[k] = v
+			break
+		case Timestamp:
+			if equalTime(v, prev) {
+				continue
+			}
+			newMap[k] = v
+			break
+		case map[string]interface{}:
+			var currM, prevM map[string]interface{}
+			currM = val
 
-		newM := make(map[string]interface{})
-		newMap[k] = newM
-		populateFilteredMap(prevM, currM, newM)
-		if len(newM) == 0 {
-			delete(newMap, k)
+			prevM, ok = prev.(map[string]interface{})
+			if !ok {
+				newMap[k] = v
+				continue
+			}
+
+			newM := make(map[string]interface{})
+			newMap[k] = newM
+			populateFilteredMap(prevM, currM, newM)
+			if len(newM) == 0 {
+				delete(newMap, k)
+			}
+			break
+		default:
+			newMap[k] = v
 		}
 	}
 }
@@ -349,4 +359,21 @@ func equalStrings(v, prev interface{}) bool {
 	}
 
 	return vstr == prevstr
+}
+
+func equalTime(v, prev interface{}) bool {
+	var vtime, prevtime Timestamp
+	var ok bool
+
+	vtime, ok = v.(Timestamp)
+	if !ok {
+		return false
+	}
+
+	prevtime, ok = prev.(Timestamp)
+	if !ok {
+		return false
+	}
+
+	return vtime.Equal(prevtime)
 }
