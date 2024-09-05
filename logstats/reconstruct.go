@@ -134,6 +134,15 @@ func ReconstructStatLine(keyToStatsMap map[string]interface{}, source []byte) []
 	for key, stat := range prevStatMap {
 		if _, keyExists := statMap[key]; !keyExists {
 			statMap[key] = stat
+		} else if oldHistMap, isMap := stat.(map[string]interface{}); isMap {
+			// oldVal is map aka histogram
+			var newHistmap = statMap[key].(map[string]interface{})
+			for keyRange, val := range oldHistMap {
+				if _, exists2 := newHistmap[keyRange]; !exists2 {
+					newHistmap[keyRange] = val
+				}
+			}
+			statMap[key] = newHistmap
 		}
 	}
 
