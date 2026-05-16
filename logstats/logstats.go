@@ -13,7 +13,7 @@ package logstats
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -25,18 +25,67 @@ const (
 
 var DEBUG int = 0
 
+// SyncWriteCloser is the writer contract for logstats file handlers.
+type SyncWriteCloser interface {
+	io.WriteCloser
+	Sync() error
+}
+
+type FileHandler interface {
+	// Open opens the active log file.
+	Open(fileName string) (SyncWriteCloser, int, error)
+
+	// Rotate shifts rotated files, moves the active file, opens a new active file.
+	// logstats calls Close() on the current writer before calling Rotate.
+	Rotate(fileName string, numFiles int) (SyncWriteCloser, int, error)
+
+	// DisableCompression turns off gzip compression for future rotations.
+	DisableCompression()
+}
+
+type defaultFileHandler struct {
+	compress bool
+}
+
+func (h *defaultFileHandler) Open(fileName string) (SyncWriteCloser, int, error) {
+	f, sz, err := openLogFile(fileName)
+	if err != nil {
+		return nil, 0, err
+	}
+	return f, sz, nil
+}
+
+func (h *defaultFileHandler) Rotate(fileName string, numFiles int) (SyncWriteCloser, int, error) {
+	f, sz, err := rotate(fileName, numFiles, h.compress)
+	if err != nil {
+		return nil, 0, err
+	}
+	return f, sz, nil
+}
+
+func (h *defaultFileHandler) DisableCompression() {
+	h.compress = false
+}
+
+func newDefaultFileHandler() FileHandler {
+	return &defaultFileHandler{compress: true}
+}
+
 // LogStats interface
 type LogStats interface {
-
 	// Write stats to the file.
 	Write(statType string, statMap map[string]interface{}) error
 
 	// Set flag for durability - when set to true, each call to Write will
-	// also call os.File.Sync()
+	// also call Sync() on the underlying writer if supported.
 	SetDurable(durable bool)
 
 	// Closes the log file if open.
 	Close()
+
+	// ForceRotate closes the current log file and opens a fresh one immediately,
+	// regardless of the current file size.
+	ForceRotate() error
 }
 
 // logStats. Supports regular log rotation.
@@ -46,12 +95,12 @@ type logStats struct {
 	numFiles  int
 	tsFormat  string
 
-	lock     sync.Mutex
-	sz       int
-	f        *os.File
-	durable  bool
-	compress bool
-	closed   bool
+	lock        sync.Mutex
+	sz          int
+	w           SyncWriteCloser
+	durable     bool
+	closed      bool
+	fileHandler FileHandler
 }
 
 // Create new LogStats object.
@@ -73,27 +122,36 @@ type logStats struct {
 //
 //	to be logged.
 func NewLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) (*logStats, error) {
+	return NewLogStatsWithFileHandler(fileName, sizeLimit, numFiles, tsFormat, nil)
+}
+
+// NewLogStatsWithFileHandler creates logstats with an optional file handler.
+// When fileHandler is nil, the built-in handler (gzip rotation) is used.
+func NewLogStatsWithFileHandler(fileName string, sizeLimit int, numFiles int, tsFormat string, fileHandler FileHandler) (*logStats, error) {
 	var err error
 	fileName, err = validateInput(fileName, numFiles)
 	if err != nil {
 		return nil, err
 	}
 
-	f, sz, err := openLogFile(fileName)
+	if fileHandler == nil {
+		fileHandler = newDefaultFileHandler()
+	}
+
+	w, sz, err := fileHandler.Open(fileName)
 	if err != nil {
 		return nil, err
 	}
 
-	lst := &logStats{
-		fileName:  fileName,
-		sizeLimit: sizeLimit,
-		numFiles:  numFiles,
-		tsFormat:  tsFormat,
-		f:         f,
-		sz:        sz,
-		compress:  true,
-	}
-	return lst, nil
+	return &logStats{
+		fileName:    fileName,
+		sizeLimit:   sizeLimit,
+		numFiles:    numFiles,
+		tsFormat:    tsFormat,
+		w:           w,
+		sz:          sz,
+		fileHandler: fileHandler,
+	}, nil
 }
 
 func (lst *logStats) SetDurable(durable bool) {
@@ -103,42 +161,49 @@ func (lst *logStats) SetDurable(durable bool) {
 	lst.durable = durable
 }
 
-func (lst *logStats) rotateIfNeeded() error {
-	// Rotate the logs only if current size of log file is more than
-	// specified sizeLimit. This can lead to files larger than
-	// sizeLimit.
-	if lst.needsRotation() {
-		if DEBUG != 0 {
-			fmt.Println("Log file", lst.fileName, "needs rotation")
-		}
+func (lst *logStats) ForceRotate() error {
+	lst.lock.Lock()
+	defer lst.lock.Unlock()
 
-		err := lst.f.Close()
-		if err != nil {
-			return err
-		}
+	return lst.doRotate()
+}
 
-		f, sz, err := rotate(lst.fileName, lst.numFiles, lst.compress)
-		if err != nil {
-			return err
-		}
-		lst.f = f
-		lst.sz = sz
+// doRotate performs the actual rotation. Caller must hold lst.lock.
+func (lst *logStats) doRotate() error {
+	if err := lst.w.Close(); err != nil {
+		return err
 	}
 
+	w, sz, err := lst.fileHandler.Rotate(lst.fileName, lst.numFiles)
+	if err != nil {
+		return err
+	}
+	lst.w = w
+	lst.sz = sz
 	return nil
 }
 
-func (lst *logStats) writeAndCommit(bytes []byte) error {
-	f := lst.f
+func (lst *logStats) rotateIfNeeded() error {
+	if !lst.needsRotation() {
+		return nil
+	}
 
-	err := writeToFile(f, bytes)
+	if DEBUG != 0 {
+		fmt.Println("Log file", lst.fileName, "needs rotation")
+	}
+
+	return lst.doRotate()
+}
+
+func (lst *logStats) writeAndCommit(bytes []byte) error {
+	_, err := lst.w.Write(bytes)
 	if err != nil {
 		return err
 	}
 	lst.sz += len(bytes)
 
 	if lst.durable {
-		err = f.Sync()
+		err = lst.w.Sync()
 	}
 
 	return err
@@ -152,8 +217,7 @@ func (lst *logStats) Write(statType string, statMap map[string]interface{}) erro
 		return fmt.Errorf("Use of closed logStats object")
 	}
 
-	err := lst.rotateIfNeeded()
-	if err != nil {
+	if err := lst.rotateIfNeeded(); err != nil {
 		return err
 	}
 
@@ -189,8 +253,7 @@ func (lst *logStats) needsRotation() bool {
 func (lst *logStats) disableCompression() {
 	lst.lock.Lock()
 	defer lst.lock.Unlock()
-
-	lst.compress = false
+	lst.fileHandler.DisableCompression()
 }
 
 func (lst *logStats) Close() {
@@ -201,11 +264,11 @@ func (lst *logStats) Close() {
 		return
 	}
 
-	if lst.f != nil {
-		lst.f.Close()
+	if lst.w != nil {
+		lst.w.Close()
 	}
 
-	lst.f = nil
+	lst.w = nil
 	lst.closed = true
 }
 
@@ -223,14 +286,13 @@ type dedupeLogStats struct {
 
 	lock     sync.Mutex
 	sz       int
-	f        *os.File
 	durable  bool
 	compress bool
 
 	prevStatsMap map[string]map[string]interface{}
 }
 
-// Create new LogStats object.
+// Create new DedupeLogStats object.
 // Paramters:
 // fileName:  Name of the log file. If the file name does not have ".log"
 //
@@ -249,45 +311,37 @@ type dedupeLogStats struct {
 //
 //	to be logged.
 func NewDedupeLogStats(fileName string, sizeLimit int, numFiles int, tsFormat string) (*dedupeLogStats, error) {
+	return NewDedupeLogStatsWithFileHandler(fileName, sizeLimit, numFiles, tsFormat, nil)
+}
 
-	var err error
-	fileName, err = validateInput(fileName, numFiles)
+// NewDedupeLogStatsWithFileHandler creates dedupe logstats with an optional
+// file handler. When fileHandler is nil, the built-in handler is used.
+func NewDedupeLogStatsWithFileHandler(fileName string, sizeLimit int, numFiles int, tsFormat string, fileHandler FileHandler) (*dedupeLogStats, error) {
+	lStats, err := NewLogStatsWithFileHandler(fileName, sizeLimit, numFiles, tsFormat, fileHandler)
 	if err != nil {
 		return nil, err
 	}
 
-	f, sz, err := openLogFile(fileName)
-	if err != nil {
-		return nil, err
-	}
-
-	lStats := &logStats{
-		fileName:  fileName,
-		sizeLimit: sizeLimit,
-		numFiles:  numFiles,
-		tsFormat:  tsFormat,
-		f:         f,
-		sz:        sz,
-		compress:  true,
-	}
-
-	lst := &dedupeLogStats{
+	return &dedupeLogStats{
 		logStats:     lStats,
-		fileName:     fileName,
-		sizeLimit:    sizeLimit,
-		numFiles:     numFiles,
-		tsFormat:     tsFormat,
-		f:            f,
-		sz:           sz,
-		compress:     true,
+		fileName:     lStats.fileName,
+		sizeLimit:    lStats.sizeLimit,
+		numFiles:     lStats.numFiles,
+		tsFormat:     lStats.tsFormat,
+		sz:           lStats.sz,
 		prevStatsMap: make(map[string]map[string]interface{}),
-	}
-	return lst, nil
+	}, nil
 }
 
 func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{}) error {
 	dlst.lock.Lock()
 	defer dlst.lock.Unlock()
+	// lst.lock must also be held: ForceRotate and Close hold lst.lock while
+	// modifying lst.f/lst.w/lst.sz/lst.closed, and the embedded calls below
+	// (needsRotation, rotateIfNeeded, writeAndCommit) access those fields
+	// without going through lst's own locking path.
+	dlst.logStats.lock.Lock()
+	defer dlst.logStats.lock.Unlock()
 
 	if dlst.closed {
 		return fmt.Errorf("Use of closed dedupeLogStats object")
@@ -310,10 +364,13 @@ func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{
 		}
 	}
 
+	if err != nil {
+		return err
+	}
+
 	dlst.prevStatsMap[statType] = statMap
 
-	err = dlst.rotateIfNeeded()
-	if err != nil {
+	if err = dlst.rotateIfNeeded(); err != nil {
 		return err
 	}
 
@@ -324,6 +381,10 @@ func (dlst *dedupeLogStats) Write(statType string, statMap map[string]interface{
 func (dlst *dedupeLogStats) resetPrevStatsMap() {
 	dlst.prevStatsMap = make(map[string]map[string]interface{})
 }
+
+// Compile-time interface checks.
+var _ LogStats = (*logStats)(nil)
+var _ LogStats = (*dedupeLogStats)(nil)
 
 var gStatLogger LogStats
 var gStatLoggerLock = sync.Mutex{}

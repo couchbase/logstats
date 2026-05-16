@@ -39,7 +39,7 @@ func getLogFileName(fileName string, num int, compress bool) string {
 }
 
 func getLogFileNumber(fileName string) (int, error) {
-	names := strings.Split(fileName, ".")
+	names := strings.Split(filepath.Base(fileName), ".")
 	if len(names) < 2 || len(names) > 4 {
 		return 0, fmt.Errorf("Unexpected log file name")
 	}
@@ -90,6 +90,14 @@ func openLogFile(fileName string) (*os.File, int, error) {
 	return f, int(finfo.Size()), nil
 }
 
+// RotateLogFile shifts rotated backup files, moves the active log file into
+// slot 1 (plain rename when compress=false, gzip when compress=true), then
+// opens a fresh active file. It is exported for use by external FileHandler
+// implementations that need custom writers (e.g. encrypted writers).
+func RotateLogFile(fileName string, numFiles int, compress bool) (*os.File, int, error) {
+	return rotate(fileName, numFiles, compress)
+}
+
 func writeToFile(f *os.File, bytes []byte) error {
 	n, err := f.Write(bytes)
 	if DEBUG != 0 {
@@ -101,63 +109,68 @@ func writeToFile(f *os.File, bytes []byte) error {
 
 func rotate(fileName string, numFiles int, compress bool) (*os.File, int, error) {
 	// Assumption: fileName always has ".log" extention.
+	//
+	// Design: rotated files (log.N and log.N.gz) are ALWAYS only renamed as
+	// they shift — never re-compressed. Their format (.gz or plain) is
+	// preserved in the new slot. Only the active file (log.log) is compressed
+	// when it first rotates out (compress=true) or just renamed (compress=false).
+	// This prevents double-wrapping already-encrypted rotated files when
+	// re-enabling encryption while compress=true.
 
 	name := fileName[:len(fileName)-4]
-	var pattern string
-	if compress {
-		pattern = fmt.Sprintf("%s.log.*.gz", name)
-	} else {
-		pattern = fmt.Sprintf("%s.log*", name)
-	}
-
-	all, err := filepath.Glob(pattern)
+	// Always use the .* pattern so only rotated files are collected.
+	// The active file (log.log) is handled separately below.
+	rotated, err := filepath.Glob(fmt.Sprintf("%s.log.*", name))
 	if err != nil {
 		return nil, 0, err
 	}
 
-	sort.Strings(all)
-	l := len(all)
+	sort.Strings(rotated)
+	l := len(rotated)
 	for i := l - 1; i >= 0; i-- {
-		var newFname string
-
-		oldFname := all[i]
-		if i == l-1 {
-			num, err := getLogFileNumber(all[i])
-			if err != nil {
-				return nil, 0, err
-			}
-
-			num = num + 1
-			if num >= numFiles {
-				continue
-			}
-
-			newFname = getLogFileName(fileName, num, compress)
-		} else {
-			newFname = all[i+1]
+		oldFname := rotated[i]
+		if strings.HasSuffix(oldFname, ".tmp") {
+			continue
 		}
+
+		num, err := getLogFileNumber(oldFname)
+		if err != nil {
+			return nil, 0, err
+		}
+
+		num++
+		if i == l-1 && num >= numFiles {
+			// Oldest file exceeds the retention limit; discard it.
+			os.Remove(oldFname)
+			continue
+		}
+
+		// Preserve the file's own format (.gz stays .gz, plain stays plain).
+		isGz := strings.HasSuffix(oldFname, ".gz")
+		newFname := getLogFileName(fileName, num, isGz)
 
 		if DEBUG != 0 {
 			fmt.Println("Renaming oldfile", oldFname, "newfile", newFname)
 		}
 
-		err := os.Rename(oldFname, newFname)
-		if err != nil {
+		if err := os.Rename(oldFname, newFname); err != nil {
 			return nil, 0, err
 		}
 	}
 
+	// Rotate the active file into slot 1.
+	activeFname := getLogFileName(fileName, 0, false) // always log.log
 	if compress {
-		// compress filname.0.log to filename.1.log.gz
-		sourceFname := getLogFileName(fileName, 0, compress)
-		targetFname := getLogFileName(fileName, 1, compress)
-		err = compressFile(sourceFname, targetFname)
-		if err != nil {
+		targetFname := getLogFileName(fileName, 1, true) // log.1.gz
+		if err := compressFile(activeFname, targetFname); err != nil {
 			return nil, 0, err
 		}
-
-		err = os.Remove(sourceFname)
-		if err != nil {
+		if err := os.Remove(activeFname); err != nil {
+			return nil, 0, err
+		}
+	} else {
+		targetFname := getLogFileName(fileName, 1, false) // log.1
+		if err := os.Rename(activeFname, targetFname); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -192,17 +205,9 @@ func compressFile(sourceFname, targetFname string) error {
 		return err
 	}
 
-	if DEBUG != 0 {
-		fmt.Println("compressFile: Read", len(buf), "bytes from the file:", sourceFname)
-	}
-
 	_, err = writer.Write(buf)
 	if err != nil {
 		return err
-	}
-
-	if DEBUG != 0 {
-		fmt.Println("compressFile: Written", len(buf), "bytes to the file:", targetFname)
 	}
 
 	err = r.Close()

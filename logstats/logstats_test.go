@@ -34,14 +34,12 @@ func TestLogStatsBasics(t *testing.T) {
 	}
 
 	var statLogger LogStats
-	statLogger, err = NewLogStats(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
+	statLogger, err = NewLogStatsWithFileHandler(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00", &defaultFileHandler{compress: false})
 	if err != nil {
 		t.Fatalf("TestLogStatsBasics failed with error %v", err)
 	}
 
 	defer statLogger.Close()
-
-	statLogger.(*logStats).disableCompression()
 
 	// Write a stat
 	stat := getSimpleStat(0)
@@ -75,14 +73,12 @@ func TestLogStatsRotation(t *testing.T) {
 	}
 
 	var statLogger LogStats
-	statLogger, err = NewLogStats(fileName, 128, 4, "2006-01-02T15:04:05.000-07:00")
+	statLogger, err = NewLogStatsWithFileHandler(fileName, 128, 4, "2006-01-02T15:04:05.000-07:00", &defaultFileHandler{compress: false})
 	if err != nil {
 		t.Fatalf("TestLogStatsRotation failed with error %v", err)
 	}
 
 	defer statLogger.Close()
-
-	statLogger.(*logStats).disableCompression()
 
 	// Write a stat
 	exp := make([]map[string]interface{}, 0)
@@ -117,14 +113,12 @@ func TestDedupeLogStatsBasics(t *testing.T) {
 	}
 
 	var statLogger LogStats
-	statLogger, err = NewDedupeLogStats(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00")
+	statLogger, err = NewDedupeLogStatsWithFileHandler(fileName, 1024*1024, 2, "2006-01-02T15:04:05.000-07:00", &defaultFileHandler{compress: false})
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsBasics failed with error %v", err)
 	}
 
 	defer statLogger.Close()
-
-	statLogger.(*dedupeLogStats).disableCompression()
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)
@@ -189,14 +183,12 @@ func TestDedupeLogStatsRotate(t *testing.T) {
 	}
 
 	var statLogger LogStats
-	statLogger, err = NewDedupeLogStats(fileName, 128, 5, "2006-01-02T15:04:05.000-07:00")
+	statLogger, err = NewDedupeLogStatsWithFileHandler(fileName, 128, 5, "2006-01-02T15:04:05.000-07:00", &defaultFileHandler{compress: false})
 	if err != nil {
 		t.Fatalf("TestDedupeLogStatsRotate failed with error %v", err)
 	}
 
 	defer statLogger.Close()
-
-	statLogger.(*dedupeLogStats).disableCompression()
 
 	// Write dedupe stats
 	stat := getSimpleStat(0)
