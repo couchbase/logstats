@@ -164,6 +164,9 @@ func (lst *logStats) SetDurable(durable bool) {
 func (lst *logStats) ForceRotate() error {
 	lst.lock.Lock()
 	defer lst.lock.Unlock()
+	if lst.closed {
+		return fmt.Errorf("Use of closed logStats object")
+	}
 
 	return lst.doRotate()
 }
